@@ -1,0 +1,132 @@
+@type
+spiral  :: a -> Int -> ? -> a
+POP_0   :: Int -> Int -> Int -> [[[Int]]]
+NICHE_0 :: Int -> Int -> Int -> Int -> [(Int, Int, Num, Num, Num)]
+
+@path
+null . spiral .
+  &(
+    nextgen                          .
+    final_fitness                    .
+    relative_fitness &exteme_penalty .
+    total_fitness                    .
+    allind &niche_contribution       .
+    indmap                           .
+    &fitness
+  )
+  # Initial population
+  (sample_pop . *G (N0 . *N_MAX) *K)
+  # Number of iterations
+  *TRIALS
+  # $1
+  (sample_niches . *G *E *b1 *b2)
+  # $2
+  *N_MAX
+  # $3
+  *K
+
+
+
+TRIALS :: 5    # number of generations to run
+N_MAX  :: 100  # carrying capacity
+K      :: 5    # number of loci
+E      :: 20   # number of niches
+G      :: 500  # size of grid
+b1     :: 5    # niche jump hyperparameter
+b2     :: 5    # niche jump hyperparameter
+
+
+
+@source R
+
+spiral <- function(FUN, loc_init, loc_trials, ...){
+   x <- list()
+   x[[1]] <- loc_init
+   if(loc_trials > 0){
+       for(i in 1:loc_trials){
+           x[[i+1]] <- do.call(FUN, append(x[i], list(...))) 
+       }
+   }
+   x
+}
+
+N0 <- function(n_max){
+   ceiling(n_max / 2)
+}
+
+require(abind)
+
+mut <- function(mu, pop) {
+    m <- pop + sample(c(-1, 0, 1))
+    m[which(pop == G + 1, arr=TRUE)] <- G
+    m[which(pop == 0,     arr=TRUE)] <- 1
+    m
+}
+
+# Calculate fitness of one locus in an individual relative to each niche
+fitness <- function(pos, niches){
+    x <- pos[1]
+    y <- pos[2]
+    niches$A * exp(-1 * sqrt((x - niches$x)^2 + (y - niches$y)^2) / niches$s)
+}
+
+# Build table of E niches X K loci for one individual
+indmap <- function(ind, pop, K, ...){
+    do.call(cbind, lapply(1:K, function(i) fitness(pop[ind,K,], ...)))
+}
+
+# Build one table for each individual
+allind <- function(N, ...){
+    lapply(1:N, indmap, ...)
+}
+
+# Calculate the fitness contribution relative to a niche
+niche_contribution <- function(x){
+    # For now, use max. This assumes each trait is dependent on one gene.
+    max(x)
+}
+
+# Calculate fitness of each individual for each niche
+total_fitness <- function(...){
+    f <- lapply(allind(...), apply, 1, niche_contribution)
+    fsum <- unlist(lapply(f, sum))
+}
+
+# get the fitness of each individual normalized against the most fit one
+relative_fitness <- function(...){
+    fsum <- total_fitness(...)
+    fsum.norm <- fsum / max(fsum)
+}
+
+# Calculate a penalty for the population. Very low and very high values are penalized.
+extreme_penalty <- function(n, N, k){
+    1 - n ^ (-k * (N - n) / N)
+}
+
+final_fitness <- function(N_MAX, k, ...){
+    rfit <- relative_fitness(...)
+    rfit <- rfit * extreme_penalty(nrow(rfit), N_MAX, k)
+}
+
+nextgen <- function(pop, N, ...){
+    fitness <- final_fitness(...)
+    pop[rep(runif(N) < fitness, each=2)] 
+}
+
+sample_pop <- function(G, N_0, K){
+  array(sample.int(G, N_0*K*2), dim=c(N_0, K, 2))
+}
+
+sample_niches <- function(G, E, b1, b2){
+  data.frame(
+    x = sample.int(G, E),
+    y = sample.int(G, E),
+    A = rexp(E),
+    s = 1 / rexp(E),
+    j = rbeta(E, b1, b2)
+  )
+}
+
+initial_population_size <- function(N0){
+    N0 / 2
+}
